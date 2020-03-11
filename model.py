@@ -4,7 +4,7 @@ import glob
 import cv2
 import tensorflow as tf
 import tensorflow.keras as tfk
-from tensorflow.keras.layers import Conv2D, Input, Layer, Dense, Flatten, Conv2DTranspose, ReLU, LeakyReLU, Dropout, AveragePooling2D, LayerNormalization,Activation
+from tensorflow.keras.layers import Conv2D, Input, Layer, Dense, Flatten, Conv2DTranspose, ReLU, LeakyReLU, Dropout, AveragePooling2D, LayerNormalization, Activation, Softmax
 from tensorflow.keras.activations import tanh
 from tensorflow.keras.models import Model,Sequential
 import tensorflow_addons as tfa
@@ -13,38 +13,45 @@ import random
 import sys
 import math
 
-class Attention(Model):
-    def __init__(self, dim: int, batch_size: int, length: int, head_num: int):
-        self.dim = dim
-        self.batch_size = batch_size
-        self.length = length
-        self.head_num = head_num
-        
 
-    def call(self, inputs, attntion_mask):
-        pass
 
 class MultiHeadAttention(Model):
-    def __init__(self, batch_size: int, head_num: int, dim: int, length: int):
-        self.attentions = [Attention(dim / head_num, batch_size, length, head_num) for _ in range(head_num)]
-        self.dense_query_key = Dense(dim)
+    def __init__(self, batch_size: int, head_num: int, dim: int, length: int, dropout_rate: float = 0.5):
+        self.dense_query = Dense(dim)
+        self.dense_key = Dense(dim)
         self.dense_value = Dense(dim)
+        self.softmax = Softmax()
+        self.dropot = Dropout(dropout_rate)
+        
 
     def call(self, inputs, attention_mask):
-        query_key = self.dense_query_key(inputs)
+        query = self.dense_query(inputs)
+        key = self.dense_key(inputs)
         value = self.dense_value(inputs)
+        query_split, key_split, value_split = self._split(query), self._split(key), self._split(value)
+        key_split = tf.transpose(key_split, perm=[0, 1, 3, 2])
+        query_value = tf.matmul(query_split, key_split)
+        query_value *= ((self.dim // self.head_num)**(-0.5))
         
-        for u in range(self.head_num):
-            #分割したinputとattention maskを使い、計算
-            continue
+        mask_expand = tf.expand_dims(attention_mask, axis=1)
+        #マスクされたところが1のため、大きいマイナスの値を付与することで、
+        #softmaxにおいて影響が無いようにする
+        mask_expand *= -10 * 6
+        query_value = self.softmax(query_value + mask_expand)
+        
+
+        
+        
             
         
     def _split(self, inputs):
         with tf.name_scope('split_attention'):
             #分割(分割後の次元は(batch_size*length,head_num,dim/head_num))
             split_inputs = tf.stack([tf.split(inputs, num_or_size_splits=self.head_num, axis=-1)])[0]
-            #次元を(head_num,batch_size*length,dim/head_num)に変更
-            split_inputs = tf.transpose(split_inputs, perm=[2, 0, 1])
+            #分割(分割後の次元は(batch_size,length,head_num,dim/head_num))
+            split_inputs = tf.stack([tf.split(inputs, num_or_size_splits=self.batch_size, axis=-1)])[0]
+            #次元を(batch_size,head_num,length,dim/head_num)に変更
+            split_inputs = tf.transpose(split_inputs, perm=[0, 2, 1, 3])
             return split_inputs
 
 class FeedForward(Model):
